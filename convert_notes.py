@@ -4,6 +4,11 @@ import json
 import os
 import re
 import sys
+import platform
+import pywintypes
+import win32file
+import win32con
+
 from datetime import datetime
 from subprocess import call
 
@@ -15,9 +20,26 @@ OUTPUT_DIRECTORY = "./notes_converted/"
 
 # Should the creation time of the created files be set to the creation
 # time of the original notes?
-# Will fail if you're not on a Mac, or don't have Xcode installed -
+# Will fail if you're 
+# 1. not on a Mac, or don't have Xcode installed
+# 2. not on Windows
 # in which case set this to False.
 KEEP_ORIGINAL_CREATION_TIME = True
+
+IS_WINDOWS = platform.system() == "Windows"
+
+def set_creation_time_windows(filepath, dt):
+    wintime = pywintypes.Time(dt)
+    fh = win32file.CreateFile(
+        filepath,
+        win32con.GENERIC_WRITE,
+        0, None,
+        win32con.OPEN_EXISTING,
+        win32con.FILE_ATTRIBUTE_NORMAL,
+        None
+    )
+    win32file.SetFileTime(fh, wintime, None, None)
+    fh.close()
 
 # Should the last-modified time of the created files be set to the
 # last-modified time of the original notes?
@@ -89,13 +111,15 @@ def main():
         return candidate
 
     for note in notes:
-        title = (note["content"].splitlines() or ["untitled"])[0]
+        raw_title = (note["content"].splitlines() or ["untitled"])[0]
+        clean_title = re.sub(r"^#+\s*", "", raw_title.strip())
+        title = clean_title
+        
         id_to_filename[note["id"]] = make_unique_filename(title)
 
     ###################################################################
     # 4.  Helper to rewrite a Simplenote URI to an Obsidian link
 
-    import re
     sn_link_re = re.compile(
         r"\[([^\]]+)\]\(simplenote://note/([0-9a-f-]{36})\)", flags=re.I)
 
@@ -148,10 +172,12 @@ def main():
             out.write("\n".join(lines))
 
         if KEEP_ORIGINAL_CREATION_TIME:
-            creation_time = datetime.strptime(
-                note["creationDate"], "%Y-%m-%dT%H:%M:%S.%fZ"
-            ).strftime("%m/%d/%Y %H:%M:%S %p")
-            call(["SetFile", "-d", creation_time, filepath])
+            dt = datetime.strptime(note["creationDate"], "%Y-%m-%dT%H:%M:%S.%fZ")
+            if IS_WINDOWS:
+                set_creation_time_windows(filepath, dt)
+            else:
+                creation_time = dt.strftime("%m/%d/%Y %H:%M:%S %p")
+                call(["SetFile", "-d", creation_time, filepath])
 
         if KEEP_ORIGINAL_MODIFIED_TIME:
             modified_time = datetime.strptime(
